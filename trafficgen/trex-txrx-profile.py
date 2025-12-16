@@ -442,7 +442,7 @@ class stl_stream:
           if self.flow_stats_type == 'default':
                flow_stats = STLFlowStats(pg_id = int(my_pg_id))
           elif self.flow_stats_type == 'latency':
-               flow_stats = STLFlowLatencyStats(pg_id = int(my_pg_id))
+               flow_stats = STLFlowLatencyStats(pg_id = int(my_pg_id), ieee_1588 = True)
 
           return(STLStream(packet = self.packet,
                            flow_stats = flow_stats,

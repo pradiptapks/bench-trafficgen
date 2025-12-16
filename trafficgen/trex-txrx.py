@@ -302,7 +302,7 @@ def create_traffic_profile (direction, device_pair, rate_multiplier, port_speed)
                if streams_packet_type == "default" and not t_global.args.skip_hw_flow_stats:
                     stream_flow_stats = STLFlowStats(pg_id = stream_pg_id)
                elif streams_packet_type == "latency":
-                    stream_flow_stats = STLFlowLatencyStats(pg_id = stream_pg_id)
+                    stream_flow_stats = STLFlowLatencyStats(pg_id = stream_pg_id, ieee_1588 = True)
                device_pair[direction]['pg_ids'][streams_packet_type]['list'].append(stream_pg_id)
 
                stream_loop = False

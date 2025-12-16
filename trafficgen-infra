@@ -199,6 +199,7 @@ else
 	    ;;
     esac
 
+    #trex_server_cmd="./$trex_bin ${trex_software_mode} -i --checksum-offload --cfg $trex_cfg --iom 0 -v 4 --prefix trafficgen_trex_ ${trex_mellanox_support} --close-at-end ${mbuf_factor} --hdrh --queue-drop"
     trex_server_cmd="./$trex_bin ${trex_software_mode} -i --checksum-offload --cfg $trex_cfg --iom 0 -v 4 --prefix trafficgen_trex_ ${trex_mellanox_support} --close-at-end ${mbuf_factor}"
     echo "about to run: $trex_server_cmd"
     $trex_server_cmd >$sample_dir/trex-server-stderrout.txt 2>&1 &
