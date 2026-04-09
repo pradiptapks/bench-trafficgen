@@ -2303,8 +2303,7 @@ def main():
          setup_config_var('latency_device_pair', t_global.args.latency_device_pair, trial_params)
 
     if t_global.args.traffic_generator == "null-txrx":
-         # empty for now
-         foo = None
+         pass
 
     if t_global.args.traffic_generator == "trex-txrx-profile":
          setup_config_var('random_seed', t_global.args.random_seed, trial_params)

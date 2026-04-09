@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 import sys, getopt
 sys.path.append('/opt/trex/current/automation/trex_control_plane/interactive')
 import argparse
@@ -63,10 +61,10 @@ def setup_global_variables ():
                                                                                                    'current': 0 } } } },
                                                   'ports': { 'src': 32768,
                                                              'dst': 49152 },
-                                                  'mac_prefixes': [],
+                                                  'mac_prefixes': set(),
                                                   'stream_ids': {},
                                                   'vlan': None },
-                            'uuids': [] }
+                            'uuids': set() }
 
 def process_options ():
     parser = argparse.ArgumentParser(usage="generate network traffic and report packet loss")
@@ -247,8 +245,8 @@ def generate_random_mac ():
                                                 0x16,
                                                 0x3e,
                                                 random.randint(0, 255))
-          if not mac_prefix in t_global.variables['packet_resources']['mac_prefixes']:
-               t_global.variables['packet_resources']['mac_prefixes'].append(mac_prefix)
+          if mac_prefix not in t_global.variables['packet_resources']['mac_prefixes']:
+               t_global.variables['packet_resources']['mac_prefixes'].add(mac_prefix)
                break
 
      return "%s:%02x:%02x" % (mac_prefix,
@@ -332,8 +330,8 @@ def setup_stream_packet_values (stream, device_pairs):
 def get_uuid ():
      while True:
           my_uuid = str(uuid.uuid4())
-          if not my_uuid in t_global.variables['uuids']:
-               t_global.variables['uuids'].append(my_uuid)
+          if my_uuid not in t_global.variables['uuids']:
+               t_global.variables['uuids'].add(my_uuid)
                return(my_uuid)
 
 class stl_stream:
@@ -1135,7 +1133,7 @@ def create_stream (stream, device_pair, direction, other_direction, flow_scaler)
               # if teaching_measurement is the only type for this stream, use the stream's configured rate
               # otherwise use the global default for teaching measurement rate
               if len(stream['stream_types']) != 1:
-                   stream_rate = t_global.args.teaching_warmup_packet_rate
+                   stream_rate = t_global.args.teaching_measurement_packet_rate
 
               burst_length = stream_flows / stream_rate
 
@@ -1326,10 +1324,10 @@ def main():
 
     c = STLClient(server = t_global.args.trex_host)
 
-    try:
-        thread_exit = threading.Event()
-        profiler_threads_started = False
+    thread_exit = threading.Event()
+    profiler_threads_started = False
 
+    try:
         if t_global.args.debug:
              # turn this on for some information
              c.set_verbose("debug")
@@ -1674,7 +1672,7 @@ def main():
     except (ValueError, RuntimeError) as e:
         myprint(error("%s" % (e)))
 
-    except:
+    except Exception as e:
         myprint("EXCEPTION: %s" % traceback.format_exc())
 
     finally:

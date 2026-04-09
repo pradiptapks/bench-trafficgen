@@ -1,7 +1,5 @@
 #!/usr/bin/python3
 
-from __future__ import print_function
-
 import json
 import argparse
 import datetime
@@ -107,22 +105,20 @@ def main():
     file_processed = False
 
     try:
-        input_fp = open(t_global.args.input, 'r')
-        input_json = json.load(input_fp)
-        input_fp.close()
+        with open(t_global.args.input, 'r') as input_fp:
+            input_json = json.load(input_fp)
         file_processed = True
 
-    except:
+    except (IOError, OSError, json.JSONDecodeError, ValueError):
         pass
 
     if not file_processed:
         try:
-             input_fp = lzma.open(t_global.args.input, 'r')
-             input_json = json.load(input_fp)
-             input_fp.close()
+             with lzma.open(t_global.args.input, 'r') as input_fp:
+                 input_json = json.load(input_fp)
              file_processed = True
 
-        except:
+        except (IOError, OSError, lzma.LZMAError, json.JSONDecodeError, ValueError):
              pass
 
     if not file_processed:

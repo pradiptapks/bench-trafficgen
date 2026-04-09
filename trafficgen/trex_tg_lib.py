@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 import sys
 sys.path.append('/opt/trex/current/automation/trex_control_plane/interactive')
 import json
@@ -22,6 +20,103 @@ from jsonschema import validate
 # form xx:xx:xx:xx:YY:YY where x is static and Y is being modified by
 # the TRex field engine.  This allows for a total of 65,536 flows.
 
+def build_ip_flow_vm (flow_mods, ip_src, ip_dst, tmp_num_flows):
+    vm = []
+    if flow_mods['ip']['src'] and tmp_num_flows:
+        vm += [
+            STLVmFlowVar(name = "ip_src", min_value = ip_src['start'], max_value = ip_src['end'], size = 4, op = "inc"),
+            STLVmWrFlowVar(fv_name = "ip_src", pkt_offset = "IP.src")
+        ]
+
+    if flow_mods['ip']['dst'] and tmp_num_flows:
+        vm += [
+            STLVmFlowVar(name = "ip_dst", min_value = ip_dst['start'], max_value = ip_dst['end'], size = 4, op = "inc"),
+            STLVmWrFlowVar(fv_name = "ip_dst", pkt_offset = "IP.dst")
+        ]
+
+    return vm
+
+def build_mac_flow_vm (flow_mods, tmp_num_flows, flow_offset, old_mac_flow):
+    vm = []
+    if flow_mods['mac']['src'] and tmp_num_flows:
+        if old_mac_flow:
+            vm += [
+                STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op = "inc"),
+                STLVmWrFlowVar(fv_name = "mac_src", pkt_offset = 7)
+            ]
+        else:
+            vm += [
+                STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op = "inc"),
+                STLVmWrMaskFlowVar(fv_name = "mac_src", pkt_offset = "Ether.src", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
+            ]
+
+    if flow_mods['mac']['dst'] and tmp_num_flows:
+        if old_mac_flow:
+            vm += [
+                STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op = "inc"),
+                STLVmWrFlowVar(fv_name = "mac_dst", pkt_offset = 1)
+            ]
+        else:
+            vm += [
+                STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op = "inc"),
+                STLVmWrMaskFlowVar(fv_name = "mac_dst", pkt_offset = "Ether.dst", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
+            ]
+
+    return vm
+
+def calculate_port_ranges (port_src, port_dst, num_flows, flow_mods):
+    port_range = { "start": 0, "end": 65535 }
+    if num_flows > 1 and (flow_mods['port']['src'] or flow_mods['port']['dst']):
+        if num_flows < 1000:
+            num_flows_divisor = num_flows
+        elif (num_flows % 1000) == 0:
+            num_flows_divisor = 1000
+        elif (num_flows % 1024 == 0):
+            num_flows_divisor = 1024
+        else:
+            raise ValueError("When source and/or destination port flows are enabled then the per stream flow count must be less than 1000, divisible by 1000, or divisible by 1024 (not %d)." % (num_flows))
+
+        if (port_src + num_flows_divisor) > port_range["end"]:
+            port_start = port_range["end"] - num_flows_divisor + 1
+            port_end = port_range["end"]
+        else:
+            port_start = port_src
+            port_end = port_src + num_flows_divisor - 1
+
+        port_src = { "start": port_start, "end": port_end, "init": port_src }
+
+        if (port_dst + num_flows_divisor) > port_range["end"]:
+            port_start = port_range["end"] - num_flows_divisor + 1
+            port_end = port_range["end"]
+        else:
+            port_start = port_dst
+            port_end = port_dst + num_flows_divisor - 1
+
+        port_dst = { "start": port_start, "end": port_end, "init": port_dst }
+    else:
+        port_src = { "init": port_src }
+        port_dst = { "init": port_dst }
+
+    return (port_src, port_dst)
+
+def build_port_flow_vm (flow_mods, port_src, port_dst, tmp_num_flows, packet_protocol):
+    vm = []
+    if flow_mods['port']['src'] and tmp_num_flows:
+        offset = "%s.sport" % (packet_protocol)
+        vm += [
+            STLVmFlowVar(name = "port_src", init_value = port_src['init'], min_value = port_src['start'], max_value = port_src['end'], size = 2, op = "inc"),
+            STLVmWrFlowVar(fv_name = "port_src", pkt_offset = offset)
+        ]
+
+    if flow_mods['port']['dst'] and tmp_num_flows:
+        offset = "%s.dport" % (packet_protocol)
+        vm += [
+            STLVmFlowVar(name = "port_dst", init_value = port_dst['init'], min_value = port_dst['start'], max_value = port_dst['end'], size = 2, op = "inc"),
+            STLVmWrFlowVar(fv_name = "port_dst", pkt_offset = offset)
+        ]
+
+    return vm
+
 def create_icmp_bcast_pkt (mac_src, ip_src, vlan_id, flow_mods, num_flows, enable_flow_cache, flow_offset = 0, old_mac_flow = True):
     mac_dst = 'ff:ff:ff:ff:ff:ff'
     ip_dst  = '255.255.255.255'
@@ -40,43 +135,8 @@ def create_icmp_pkt (size, mac_src, mac_dst, ip_src, ip_dst, vlan_id, flow_mods,
     ip_dst = { "start": int_to_ip(ip_to_int(ip_dst) + flow_offset), "end": int_to_ip(ip_to_int(ip_dst) + tmp_num_flows + flow_offset) }
 
     vm = []
-    if flow_mods['ip']['src'] and tmp_num_flows:
-         vm = vm + [
-              STLVmFlowVar(name = "ip_src", min_value = ip_src['start'], max_value = ip_src['end'], size = 4, op = "inc"),
-              STLVmWrFlowVar(fv_name = "ip_src", pkt_offset = "IP.src")
-         ]
-
-    if flow_mods['ip']['dst'] and tmp_num_flows:
-         vm = vm + [
-              STLVmFlowVar(name = "ip_dst", min_value = ip_dst['start'], max_value = ip_dst['end'], size = 4, op = "inc"),
-              STLVmWrFlowVar(fv_name = "ip_dst", pkt_offset = "IP.dst")
-         ]
-
-    if flow_mods['mac']['src'] and tmp_num_flows:
-         if old_mac_flow:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op = "inc"),
-                   STLVmWrFlowVar(fv_name = "mac_src", pkt_offset = 7)
-                   #STLVmWrFlowVar(fv_name = "mac_src", pkt_offset = "Ether.src", offset_fixup = 1)
-              ]
-         else:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op="inc"),
-                   STLVmWrMaskFlowVar(fv_name = "mac_src", pkt_offset = "Ether.src", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
-              ]
-
-    if flow_mods['mac']['dst'] and tmp_num_flows:
-         if old_mac_flow:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op = "inc"),
-                   STLVmWrFlowVar(fv_name = "mac_dst", pkt_offset = 1)
-                   #STLVmWrFlowVar(fv_name = "ether_mac_dst", pkt_offset = "Ether.dst", offset_fixup = 1)
-              ]
-         else:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op = "inc"),
-                   STLVmWrMaskFlowVar(fv_name = "mac_dst", pkt_offset = "Ether.dst", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
-              ]
+    vm += build_ip_flow_vm(flow_mods, ip_src, ip_dst, tmp_num_flows)
+    vm += build_mac_flow_vm(flow_mods, tmp_num_flows, flow_offset, old_mac_flow)
 
     the_packet = Ether(src = mac_src, dst = mac_dst)
 
@@ -166,37 +226,7 @@ def create_generic_pkt (size, mac_src, mac_dst, ip_src, ip_dst, port_src, port_d
     size = int(size)
     size -= 4
 
-    port_range = { "start": 0, "end": 65535 }
-    if num_flows > 1 and (flow_mods['port']['src'] or flow_mods['port']['dst']):
-         if num_flows < 1000:
-              num_flows_divisor = num_flows
-         elif (num_flows % 1000) == 0:
-              num_flows_divisor = 1000
-         elif (num_flows % 1024 == 0):
-              num_flows_divisor = 1024
-         else:
-             raise ValueError("When source and/or destination port flows are enabled then the per stream flow count must be less than 1000, divisible by 1000, or divisible by 1024 (not %d)." % (num_flows))
-
-         if (port_src + num_flows_divisor) > port_range["end"]:
-              port_start = port_range["end"] - num_flows_divisor + 1
-              port_end = port_range["end"]
-         else:
-              port_start = port_src
-              port_end = port_src + num_flows_divisor - 1
-
-         port_src = { "start": port_start, "end": port_end, "init": port_src }
-
-         if (port_dst + num_flows_divisor) > port_range["end"]:
-              port_start = port_range["end"] - num_flows_divisor + 1
-              port_end = port_range["end"]
-         else:
-              port_start = port_dst
-              port_end = port_dst + num_flows_divisor - 1
-
-         port_dst = { "start": port_start, "end": port_end, "init": port_dst }
-    else:
-         port_src = { "init": port_src }
-         port_dst = { "init": port_dst }
+    port_src, port_dst = calculate_port_ranges(port_src, port_dst, num_flows, flow_mods)
 
     tmp_num_flows = num_flows - 1
 
@@ -204,55 +234,9 @@ def create_generic_pkt (size, mac_src, mac_dst, ip_src, ip_dst, port_src, port_d
     ip_dst = { "start": int_to_ip(ip_to_int(ip_dst) + flow_offset), "end": int_to_ip(ip_to_int(ip_dst) + tmp_num_flows + flow_offset) }
 
     vm = []
-    if flow_mods['ip']['src'] and tmp_num_flows:
-        vm = vm + [
-            STLVmFlowVar(name="ip_src",min_value=ip_src['start'],max_value=ip_src['end'],size=4,op="inc"),
-            STLVmWrFlowVar(fv_name="ip_src",pkt_offset= "IP.src")
-        ]
-
-    if flow_mods['ip']['dst'] and tmp_num_flows:
-        vm = vm + [
-            STLVmFlowVar(name="ip_dst",min_value=ip_dst['start'],max_value=ip_dst['end'],size=4,op="inc"),
-            STLVmWrFlowVar(fv_name="ip_dst",pkt_offset= "IP.dst")
-        ]
-
-    if flow_mods['mac']['src'] and tmp_num_flows:
-         if old_mac_flow:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op="inc"),
-                   STLVmWrFlowVar(fv_name = "mac_src", pkt_offset = 7)
-              ]
-         else:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op="inc"),
-                   STLVmWrMaskFlowVar(fv_name = "mac_src", pkt_offset = "Ether.src", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
-              ]
-
-    if flow_mods['mac']['dst'] and tmp_num_flows:
-         if old_mac_flow:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op = "inc"),
-                   STLVmWrFlowVar(fv_name = "mac_dst", pkt_offset = 1)
-              ]
-         else:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op = "inc"),
-                   STLVmWrMaskFlowVar(fv_name = "mac_dst", pkt_offset = "Ether.dst", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
-              ]
-
-    if flow_mods['port']['src'] and tmp_num_flows:
-        offset = "%s.sport" % (packet_protocol)
-        vm = vm + [
-            STLVmFlowVar(name = "port_src", init_value = port_src['init'], min_value = port_src['start'], max_value = port_src['end'], size = 2, op = "inc"),
-            STLVmWrFlowVar(fv_name = "port_src", pkt_offset = offset)
-        ]
-
-    if flow_mods['port']['dst'] and tmp_num_flows:
-        offset = "%s.dport" % (packet_protocol)
-        vm = vm + [
-            STLVmFlowVar(name = "port_dst", init_value = port_dst['init'], min_value = port_dst['start'], max_value = port_dst['end'], size = 2, op = "inc"),
-            STLVmWrFlowVar(fv_name = "port_dst", pkt_offset = offset)
-        ]
+    vm += build_ip_flow_vm(flow_mods, ip_src, ip_dst, tmp_num_flows)
+    vm += build_mac_flow_vm(flow_mods, tmp_num_flows, flow_offset, old_mac_flow)
+    vm += build_port_flow_vm(flow_mods, port_src, port_dst, tmp_num_flows, packet_protocol)
 
     base = Ether(src = mac_src, dst = mac_dst)
 
@@ -319,37 +303,7 @@ def load_user_pkt (the_packet, size, mac_src, mac_dst, ip_src, ip_dst, port_src,
             break
         layer_counter += 1
 
-    port_range = { "start": 0, "end": 65535 }
-    if num_flows > 1 and (flow_mods['port']['src'] or flow_mods['port']['dst']):
-         if num_flows < 1000:
-              num_flows_divisor = num_flows
-         elif (num_flows % 1000) == 0:
-              num_flows_divisor = 1000
-         elif (num_flows % 1024 == 0):
-              num_flows_divisor = 1024
-         else:
-             raise ValueError("When source and/or destination port flows are enabled then the per stream flow count must be less than 1000, divisible by 1000, or divisible by 1024 (not %d)." % (num_flows))
-
-         if (port_src + num_flows_divisor) > port_range["end"]:
-              port_start = port_range["end"] - num_flows_divisor + 1
-              port_end = port_range["end"]
-         else:
-              port_start = port_src
-              port_end = port_src + num_flows_divisor - 1
-
-         port_src = { "start": port_start, "end": port_end, "init": port_src }
-
-         if (port_dst + num_flows_divisor) > port_range["end"]:
-              port_start = port_range["end"] - num_flows_divisor + 1
-              port_end = port_range["end"]
-         else:
-              port_start = port_dst
-              port_end = port_dst + num_flows_divisor - 1
-
-         port_dst = { "start": port_start, "end": port_end, "init": port_dst }
-    else:
-         port_src = { "init": port_src }
-         port_dst = { "init": port_dst }
+    port_src, port_dst = calculate_port_ranges(port_src, port_dst, num_flows, flow_mods)
 
     tmp_num_flows = num_flows - 1
 
@@ -357,55 +311,9 @@ def load_user_pkt (the_packet, size, mac_src, mac_dst, ip_src, ip_dst, port_src,
     ip_dst = { "start": int_to_ip(ip_to_int(ip_dst) + flow_offset), "end": int_to_ip(ip_to_int(ip_dst) + tmp_num_flows + flow_offset) }
 
     vm = []
-    if flow_mods['ip']['src'] and tmp_num_flows:
-        vm = vm + [
-            STLVmFlowVar(name="ip_src",min_value=ip_src['start'],max_value=ip_src['end'],size=4,op="inc"),
-            STLVmWrFlowVar(fv_name="ip_src",pkt_offset= "IP.src")
-        ]
-
-    if flow_mods['ip']['dst'] and tmp_num_flows:
-        vm = vm + [
-            STLVmFlowVar(name="ip_dst",min_value=ip_dst['start'],max_value=ip_dst['end'],size=4,op="inc"),
-            STLVmWrFlowVar(fv_name="ip_dst",pkt_offset= "IP.dst")
-        ]
-
-    if flow_mods['mac']['src'] and tmp_num_flows:
-         if old_mac_flow:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op="inc"),
-                   STLVmWrFlowVar(fv_name = "mac_src", pkt_offset = 7)
-              ]
-         else:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_src", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op="inc"),
-                   STLVmWrMaskFlowVar(fv_name = "mac_src", pkt_offset = "Ether.src", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
-              ]
-
-    if flow_mods['mac']['dst'] and tmp_num_flows:
-         if old_mac_flow:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 4, op = "inc"),
-                   STLVmWrFlowVar(fv_name = "mac_dst", pkt_offset = 1)
-              ]
-         else:
-              vm = vm + [
-                   STLVmFlowVar(name = "mac_dst", min_value = 0 + flow_offset, max_value = tmp_num_flows + flow_offset, size = 2, op = "inc"),
-                   STLVmWrMaskFlowVar(fv_name = "mac_dst", pkt_offset = "Ether.dst", offset_fixup = 4, mask = 0xFFFF, pkt_cast_size = 2)
-              ]
-
-    if flow_mods['port']['src'] and tmp_num_flows:
-        offset = "%s.sport" % (packet_protocol)
-        vm = vm + [
-            STLVmFlowVar(name = "port_src", init_value = port_src['init'], min_value = port_src['start'], max_value = port_src['end'], size = 2, op = "inc"),
-            STLVmWrFlowVar(fv_name = "port_src", pkt_offset = offset)
-        ]
-
-    if flow_mods['port']['dst'] and tmp_num_flows:
-        offset = "%s.dport" % (packet_protocol)
-        vm = vm + [
-            STLVmFlowVar(name = "port_dst", init_value = port_dst['init'], min_value = port_dst['start'], max_value = port_dst['end'], size = 2, op = "inc"),
-            STLVmWrFlowVar(fv_name = "port_dst", pkt_offset = offset)
-        ]
+    vm += build_ip_flow_vm(flow_mods, ip_src, ip_dst, tmp_num_flows)
+    vm += build_mac_flow_vm(flow_mods, tmp_num_flows, flow_offset, old_mac_flow)
+    vm += build_port_flow_vm(flow_mods, port_src, port_dst, tmp_num_flows, packet_protocol)
 
     if len(the_packet) < size:
         pad = max(0, size-len(the_packet)) * 'x'
@@ -489,9 +397,9 @@ def create_profile_stream (flows = 0,
 def process_profile_stream(stream, rate_modifier):
     for key in stream:
         if not key in [ 'flow_mods', 'the_packet' ]:
-            next
+            continue
 
-        if isinstance(stream[key], basestring):
+        if isinstance(stream[key], str):
             # convert from unicode to string
             stream[key] = str(stream[key])
 
@@ -500,13 +408,12 @@ def process_profile_stream(stream, rate_modifier):
             if (key == 'flow_mods') and (fields[0] == 'function'):
                 try:
                     stream[key] = eval(fields[1])
-                except:
+                except Exception:
                     raise ValueError("Failed to eval '%s' for '%s'" % (fields[1], key))
             elif (key == 'the_packet') and (fields[0] == 'scapy'):
                 try:
                     stream[key] = eval(fields[1])
-                    #print("validate_profile_stream:the_packet: scapy:%s\n" % (stream[key].command()))
-                except:
+                except Exception:
                     raise ValueError("Failed to eval '%s' for '%s'" % (fields[1], key))
 
     if not 'stream_types' in stream:
@@ -560,10 +467,9 @@ def process_profile_stream(stream, rate_modifier):
 
 def load_traffic_profile (traffic_profile = "", rate_modifier = 100.0, log_function = print, profile_name = None):
      try:
-          traffic_profile_fp = open(traffic_profile, 'r')
-          profile = json.load(traffic_profile_fp)
-          traffic_profile_fp.close()
-     except:
+          with open(traffic_profile, 'r') as traffic_profile_fp:
+               profile = json.load(traffic_profile_fp)
+     except (IOError, OSError, json.JSONDecodeError) as e:
           log_function("EXCEPTION: %s" % traceback.format_exc())
           log_function(error("Could not load a JSON traffic profile from %s" % (traffic_profile)))
           return(1)
@@ -573,11 +479,10 @@ def load_traffic_profile (traffic_profile = "", rate_modifier = 100.0, log_funct
      schema_file = Path(__file__).parent / "traffic-profile-schema.json"
 
      try:
-         schema_fp = open(schema_file, 'r')
-         schema_contents = json.load(schema_fp)
-         schema_fp.close()
+         with open(schema_file, 'r') as schema_fp:
+             schema_contents = json.load(schema_fp)
 
-     except:
+     except (IOError, OSError, json.JSONDecodeError) as e:
          print("EXCEPTION: %s" % (traceback.format_exc()))
          print(error("Failed to load the JSON traffic profile schema from %s" % (schema_file)))
          return(1)
@@ -585,7 +490,7 @@ def load_traffic_profile (traffic_profile = "", rate_modifier = 100.0, log_funct
      try:
          validate(instance=profile, schema=schema_contents)
 
-     except:
+     except Exception as e:
          log_function("EXCEPTION: %s" % traceback.format_exc())
          log_function(error("The loaded JSON traffic profile (%s) failed to validate against the traffic profile schema (%s)" % (traffic_profile, schema_file)))
          return(1)
@@ -632,7 +537,7 @@ def load_traffic_profile (traffic_profile = "", rate_modifier = 100.0, log_funct
               log_function(error("Traffic profile %s is missing 'streams' or 'profiles'" % (traffic_profile)))
               return(1)
 
-     except:
+     except (KeyError, ValueError, TypeError) as e:
           log_function("EXCEPTION: %s" % traceback.format_exc())
           log_function(error("Could not resolve named traffic profiles from %s" % (traffic_profile)))
           return(1)
@@ -661,7 +566,7 @@ def load_traffic_profile (traffic_profile = "", rate_modifier = 100.0, log_funct
                  stream['flows'] = math.ceil(stream['flows'] / 2.0)
 
              stream_counter += 1
-     except:
+     except (KeyError, ValueError, TypeError) as e:
           log_function("EXCEPTION: %s" % traceback.format_exc())
           log_function(error("Could not process the traffic profile from %s" % (traffic_profile)))
           return(1)
@@ -695,7 +600,7 @@ def trex_profiler (connection, claimed_device_pairs, interval, profiler_pgids, p
      except STLError as e:
           print("TRex Profiler: STLERROR: %s" % e)
 
-     except StandardError as e:
+     except Exception as e:
           print("TRex Profiler: STANDARDERROR: %s" % e)
 
      finally:
@@ -706,7 +611,6 @@ def trex_profiler_logger (logfile, profiler_queue, thread_exit):
 
      try:
           profiler_logfile = lzma.open(logfile, 'wt')
-          profiler_logfile_close = True
 
      except IOError:
           print(error("Could not open profiler log %s for writing" % (logfile)))
@@ -718,7 +622,7 @@ def trex_profiler_logger (logfile, profiler_queue, thread_exit):
                profiler_logfile.write(dump_json_parsable(log_entry))
                profiler_logfile.write("\n\n")
           except IndexError:
-               foo = None
+               pass
 
           time.sleep(1)
 
@@ -872,7 +776,7 @@ def trex_profiler_postprocess_file (input_file):
 
         return(stats)
 
-    except:
+    except (IOError, OSError, json.JSONDecodeError, KeyError, ValueError) as e:
         print("EXCEPTION: %s" % (traceback.format_exc()))
         print(error("Could not process the input file"))
         return(None)

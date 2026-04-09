@@ -29,11 +29,10 @@ def main():
     process_options()
 
     try:
-        json_fp = open(t_global.args.json_file, 'r')
-        json_contents = json.load(json_fp)
-        json_fp.close()
+        with open(t_global.args.json_file, 'r') as json_fp:
+            json_contents = json.load(json_fp)
 
-    except:
+    except (IOError, OSError, json.JSONDecodeError) as e:
         print("EXCEPTION: %s" % traceback.format_exc())
         print("ERROR: Could not load a valid JSON file from %s" % (t_global.args.json_file))
         return(1)
@@ -41,11 +40,10 @@ def main():
     schema_file = Path(__file__).parent / "traffic-profile-schema.json"
 
     try:
-        schema_fp = open(schema_file, 'r')
-        schema_contents = json.load(schema_fp)
-        schema_fp.close()
+        with open(schema_file, 'r') as schema_fp:
+            schema_contents = json.load(schema_fp)
 
-    except:
+    except (IOError, OSError, json.JSONDecodeError) as e:
         print("EXCEPTION: %s" % traceback.format_exc())
         print("ERROR: Could not load a valid JSON schema file from %s" % (schema_file))
         return(2)
@@ -53,7 +51,7 @@ def main():
     try:
         validate(instance=json_contents, schema=schema_contents)
 
-    except:
+    except Exception as e:
         print("EXCEPTION: %s" % traceback.format_exc())
         print("ERROR: JSON validation failed for %s using schema %s" % (t_global.args.json_file, schema_file))
         return(3)
