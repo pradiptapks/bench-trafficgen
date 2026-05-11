@@ -39,7 +39,7 @@ TRIAL_PROFILER_METRICS = [
     {"key": "tsdelta", "subkey": "", "field": "", "class": "count", "type": "tsdelta", "extra_field": "", "cumulative": False},
     {"key": "global", "subkey": "rx", "field": "pps", "class": "throughput", "type": "rx-pps", "extra_field": "", "cumulative": False},
     {"key": "global", "subkey": "tx", "field": "pps", "class": "throughput", "type": "tx-pps", "extra_field": "", "cumulative": False},
-    {"key": "global", "subkey": "rx", "field": "bps", "class": "througput", "type": "rx-bps", "extra_field": "", "cumulative": False},
+    {"key": "global", "subkey": "rx", "field": "bps", "class": "throughput", "type": "rx-bps", "extra_field": "", "cumulative": False},
     {"key": "global", "subkey": "tx", "field": "bps", "class": "throughput", "type": "tx-bps", "extra_field": "", "cumulative": False},
     {"key": "global", "subkey": "rx", "field": "drop_bps", "class": "throughput", "type": "rx-drop-bps", "extra_field": "", "cumulative": False},
     {"key": "global", "subkey": "misc", "field": "cpu_util", "class": "count", "type": "tx-cpu-util", "extra_field": "", "cumulative": False},
