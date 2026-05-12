@@ -7,7 +7,7 @@
     "benchmark": "trafficgen",
     "controller": {
         "pre-script": "%bench-dir%/trafficgen-import-files",
-        "post-script": "%bench-dir%trafficgen-post-process"
+        "post-script": "%bench-dir%trafficgen-post-process.py"
     },
     "client": {
         "client-server-ratio" : "1:N",
