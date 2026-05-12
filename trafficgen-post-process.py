@@ -289,7 +289,7 @@ def main():
         for dev_pair in trial["trial_params"].get("test_dev_pairs", []):
             for tsdm in TRIAL_STATS_DEVICE_METRICS:
                 desc = {"class": tsdm["class"], "source": "trafficgen", "type": tsdm["type"]}
-                value = trial["stats"].get(dev_pair[tsdm["key"]], {}).get(tsdm["field"], 0)
+                value = trial["stats"].get(str(dev_pair[tsdm["key"]]), {}).get(tsdm["field"], 0)
                 sample = {"end": trial_end, "begin": trial_begin, "value": value}
                 names = {"tx_port": dev_pair["tx"], "rx_port": dev_pair["rx"], "port_pair": dev_pair["dev_pair"]}
                 metrics.log_sample(period_name, desc, names, sample)
