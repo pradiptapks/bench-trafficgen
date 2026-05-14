@@ -18,7 +18,7 @@ Scripts and configuration to run traffic generation benchmarks within the crucib
 | `trafficgen-post-process` | Parses test JSON into CDM-compliant metrics |
 | `trafficgen/binary-search.py` | Core binary search algorithm for throughput testing |
 | `trafficgen/tg_lib.py` | Traffic generator library |
-| `workshop.json` | Engine image build: TRex, DPDK, and dependencies |
+| `workshop.json` | Engine image build: TRex v3.04, DPDK, and dependencies |
 
 ## Conventions
 - Primary branch is `main`
